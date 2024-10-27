@@ -1,3 +1,9 @@
+# Announcement
+
+This code is to extend the LSM-trie with eviction and flushing interface as a presistent write buffer.
+
+The following is the original readme.
+
 # Notes
 
 This LSM-trie implementation does not use any user-space cache. Its read performance is bottlenecked by I/O.
