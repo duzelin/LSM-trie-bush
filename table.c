@@ -290,7 +290,12 @@ rawitem_to_item(const struct RawItem * const ri, struct Mempool * const mempool,
   if (hash) {
     memcpy(item->hash, hash, HASHBYTES);
   } else {
-    SHA1(item->kv, item->klen, item->hash);
+#ifndef KEY_IS_HASH
+  // SHA1
+  SHA1(item->kv, item->klen, item->hash);
+#else
+  memcpy(item->hash, kv->pk, item->klen);
+#endif
   }
   uint8_t buf[16];
   uint8_t * const p1 = encode_uint16(buf, item->klen);
@@ -314,8 +319,12 @@ keyvalue_to_item(const struct KeyValue * const kv, struct Mempool * const mempoo
   item->vlen = kv->vlen;
   memcpy(item->kv, kv->pk, item->klen);
   memcpy(item->kv + item->klen, kv->pv, item->vlen);
+#ifndef KEY_IS_HASH
   // SHA1
   SHA1(item->kv, item->klen, item->hash);
+#else
+  memcpy(item->hash, kv->pk, item->klen);
+#endif
   uint8_t buf[16];
   uint8_t * const p1 = encode_uint16(buf, item->klen);
   uint8_t * const p2 = encode_uint16(p1, item->vlen);
@@ -978,7 +987,7 @@ raw_barrel_fetch_multiple(struct MetaTable * const mt, const uint64_t start_id,
   const uint64_t off_barrel = (start_id * BARREL_ALIGN) + mt->mfh.off;
   const size_t bytes = BARREL_ALIGN * nbarrels;
   const ssize_t r = pread(mt->raw_fd, buf, bytes, (off_t)off_barrel);
-  return (r == BARREL_ALIGN)?true:false;
+  return (r == bytes)?true:false;
 }
 
   static const struct MetaIndex *
@@ -994,13 +1003,33 @@ raw_barrel_feed_to_tables(uint8_t * const raw, struct Table * const * const tabl
     uint64_t (*select_table)(const uint8_t * const, const uint64_t), const uint64_t arg2)
 {
   struct RawItem ri;
+#ifndef KEY_IS_HASH
   uint8_t hash[HASHBYTES] __attribute__((aligned(8)));
+#else
+  uint8_t * hash = NULL;
+#endif
   const bool r = rawitem_init(&ri, raw);
   if (r == false) return false;
   do {
+#ifndef KEY_IS_HASH
     SHA1(ri.pk, ri.klen, hash);
+#else
+    hash = ri.pk;
+#endif
     const uint64_t tid = select_table(hash, arg2);
     table_insert_rawitem_mt(tables[tid], &ri, hash);
+  } while (rawitem_next(&ri));
+  return true;
+}
+
+  static bool
+raw_barrel_feed_to_array(uint8_t * const raw, struct Mempool * const itempool)
+{
+  struct RawItem ri;
+  const bool r = rawitem_init(&ri, raw);
+  if (r == false) return false;
+  do {
+
   } while (rawitem_next(&ri));
   return true;
 }
@@ -1128,5 +1157,12 @@ metatable_feed_barrels_to_tables(struct MetaTable * const mt, const uint16_t sta
     const bool rf = raw_barrel_feed_to_tables(raw, tables, select_table, arg2);
     assert(rf);
   }
+  return true;
+}
+
+  bool
+metatable_feed_all_barrels_to_array(struct MetaTable * const mt, uint8_t * const arena)
+{
+  raw_barrel_fetch_multiple(mt, 0, TABLE_NR_BARRELS, arena);
   return true;
 }

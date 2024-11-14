@@ -39,3 +39,6 @@ db_stat_clean(struct DB * const db);
 
 bool
 db_doing_compaction(struct DB * const db);
+
+void
+db_set_detach_dump_function(struct DB * const db, void (*func)(uint8_t * const));

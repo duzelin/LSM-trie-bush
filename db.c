@@ -111,6 +111,9 @@ struct DB {
   uint64_t compaction_running_counter;
   // stat
   struct Stat stat;
+
+  //detach dump function
+  void (*detach_dump)(uint8_t * const);
 };
 
 struct Compaction {
@@ -144,6 +147,16 @@ struct Compaction {
   struct BloomContainer *mbcs_new[8];
 };
 
+struct Detach {
+  uint64_t nr_feed;
+  uint64_t feed_size;
+  uint64_t feed_id;
+  struct DB * db;
+  struct VirtualContainer * vc;
+  uint8_t * arena;
+  struct MetaTable *mts_old[DB_CONTAINER_NR];
+  uint64_t mtids_old[DB_CONTAINER_NR];
+};
 
 #define DB_META_MAIN             ("META")
 #define DB_META_CMAP_PREFIX      ("CONTAINER_MAP")
@@ -859,12 +872,119 @@ compaction_main(struct DB * const db, struct VirtualContainer * const vc, const 
 }
 
   static void
+detach_initial(struct Detach* const det, struct DB* const db, struct VirtualContainer* const vc) {
+  bzero(det, sizeof(*det));
+  assert(vc->cc.count <= DB_CONTAINER_NR);
+  det->nr_feed = vc->cc.count;
+  det->db = db;
+  det->vc = vc;
+
+  // alloc arenas
+  uint8_t * const arena = huge_alloc(TABLE_ALIGN * det->nr_feed);
+  assert(arena);
+  det->arena = arena;
+  // old mts & mtids
+  for (uint64_t i = 0; i < det->nr_feed; i++) {
+    struct MetaTable * const mt = vc->cc.metatables[i];
+    assert(mt);
+    det->mts_old[i] = mt;
+    det->mtids_old[i] = mt->mtid;
+  }
+}
+
+  static bool
+detach_feed(struct Detach* const det)
+{
+  const uint64_t feed_id = __sync_fetch_and_add(&(det->feed_id), 1);
+  struct MetaTable * const mt = det->mts_old[feed_id];
+  if (feed_id >= det->nr_feed) return true;
+  uint8_t * const arena = det->arena + (feed_id * TABLE_ALIGN);
+  metatable_feed_all_barrels_to_array(mt, arena);
+  return true;
+}
+
+  static void*
+thread_detach_feed(void* const p)
+{
+  struct Detach* const det = (typeof(det))p;
+  detach_feed(det);
+  pthread_exit(NULL);
+}
+
+  static void
+detach_feed_all(struct Detach* const det) {
+  // read the HTable to the array like compaction_feed_all()
+  const double sec0 = debug_time_sec();
+  det->feed_id = 0;
+  conc_fork_reduce(DB_FEED_NR, thread_detach_feed, det);
+  // db_log_diff(det->db, sec0, "FEED @%lu [%8lx #%08lx]", comp->start_bit/3, comp->mts_old[i]->mtid, comp->mts_old[i]->mfh.off/TABLE_ALIGN);
+}
+
+  static void
+detach_update_vc(struct Detach * const det) {
+const uint64_t ticket = rwlock_writer_lock(&(det->db->rwlock));
+
+  struct VirtualContainer * const vc = det->vc;
+
+  const uint64_t nr_keep = vc->cc.count - det->nr_feed;
+  // shift
+  for (uint64_t i = 0; i < nr_keep; i++) {
+    vc->cc.metatables[i] = vc->cc.metatables[i + det->nr_feed];
+  }
+  // NULL
+  for (uint64_t i = nr_keep; i < DB_CONTAINER_NR; i++) {
+    vc->cc.metatables[i] = NULL;
+  }
+  vc->cc.count = nr_keep;
+
+  rwlock_writer_unlock(&(det->db->rwlock), ticket);
+}
+
+  static void
+detach_dump_all(struct Detach * const det) {
+  det->db->detach_dump(det->arena);
+}
+
+  static void
+detach_free_old(struct Detach * const det) {
+  // free n
+  for (uint64_t i = 0; i < det->nr_feed; i++) {
+    containermap_release(det->db->cms[det->vc->start_bit/3], det->mts_old[i]->mfh.off);
+    metatable_free(det->mts_old[i]);
+    db_destory_metatable(det->db, det->mtids_old[i]);
+  }
+}
+
+  static void 
+detach_main(struct DB * const db, struct VirtualContainer * const vc) {
+  // detach the virtual container
+  struct Detach det;
+  const double sec0 = debug_time_sec();
+  detach_initial(&det, db, vc);
+  detach_feed_all(&det);
+  detach_dump_all(&det);
+  detach_update_vc(&det);
+  detach_free_old(&det);
+  db_log_diff(db, sec0, "DETACH @%lu %2lu", vc->start_bit/3u, det.nr_feed);
+  stat_inc(&(db->stat.nr_detach));
+}
+
+  void
+db_set_detach_dump_function(struct DB * const db, void (*func)(uint8_t * const)) {
+  db->detach_dump = func;
+}
+
+  static void
 recursive_compaction(struct DB * const db, struct VirtualContainer * const vc)
 {
   assert(vc);
-  // disable compaction for last level
-  if (vc->start_bit >= BC_START_BIT) return;
-
+  // Modified.
+  // If the start_bit is larger than BC_START_BIT, then it is a leaf node.
+  // In this case, we should detach the virtual container.
+  if (vc->start_bit >= BC_START_BIT) {
+    detach_main(db, vc);
+    return;
+  }
   const uint64_t nr_input = vc_count_feed(vc);
   if (nr_input == 0) { return; }
 
@@ -900,7 +1020,7 @@ db_root_compaction(struct DB * const db, const uint64_t token)
   pthread_mutex_unlock(&(db->mutex_current));
   pthread_mutex_unlock(&(db->mutex_root));
 
-  // lock the child tree
+  // lock the child tree, each compaction thread will lock the child tree that it is working on
   pthread_mutex_lock(&(db->mutex_token[token]));
   struct VirtualContainer * const vc1 = vc_pick_compaction(vc->sub_vc, token, DB_COMPACTION_NR);
   if (vc1) {
@@ -1105,8 +1225,12 @@ recursive_lookup(struct Stat * const stat, struct VirtualContainer * const vc, c
   struct KeyValue *
 db_lookup(struct DB * const db, const uint16_t klen, const uint8_t * const key)
 {
+#ifndef KEY_IS_HASH
   uint8_t hash[HASHBYTES] __attribute__ ((aligned(8)));
   SHA1(key, klen, hash);
+#else
+  uint8_t * const hash = (uint8_t *)key;
+#endif
 
   stat_inc(&(db->stat.nr_get));
   const uint64_t ticket = rwlock_reader_lock(&(db->rwlock));

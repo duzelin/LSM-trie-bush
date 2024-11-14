@@ -120,3 +120,6 @@ bool
 metatable_feed_barrels_to_tables(struct MetaTable * const mt, const uint16_t start,
     const uint16_t nr, uint8_t * const arena, struct Table * const * const tables,
     uint64_t (*select_table)(const uint8_t * const, const uint64_t), const uint64_t arg2);
+
+bool
+metatable_feed_all_barrels_to_array(struct MetaTable * const mt, uint8_t * const arena);

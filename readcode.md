@@ -17,6 +17,11 @@ active table
 ### What's the structure of the barrel and Meta Index?
 rid? min?
 
+### What's the purpose of the Bloom Table and Bloom Container
+BTable and BContainer should be mutually exclusive.
+BTable is kept in memory.
+BContainer is stored on disk.
+
 ## Dump
 
 ### active table dumper
@@ -35,3 +40,20 @@ rid? min?
 ### meta table dumper
 
 ### compaction dump
+
+compaction thread -> compaction main()
+1. compaction_initial()
+    * allocate arena
+    * 
+2. compaction_feed_all()
+    multiple threads read barrels to the table buffer
+    file -> arena (rawitem) -> table's mempool (item) (new table only records reference of items of each bucket)
+3. compaction_build_bt_all()
+4. compaction_dump_and_bc_all()
+    balance buckets
+5. compaction_update_vc()
+6. compaction_free_old()
+
+recursive compaction()
+* disable compaction for last level
+* [Modified] detach

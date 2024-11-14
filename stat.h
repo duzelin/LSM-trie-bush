@@ -25,6 +25,7 @@ struct Stat {
   uint64_t nr_set_retry;
 
   uint64_t nr_compaction;
+  uint64_t nr_detach;
   uint64_t nr_active_dumped;
 
   uint64_t nr_write[64];
