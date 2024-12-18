@@ -34,6 +34,14 @@ struct KeyValue {
 
 #define TABLE_ILOCKS_NR ((UINT64_C(64)))
 
+#define BARREL_CAP ((BARREL_ALIGN - sizeof(struct MetaIndex)))
+
+struct MetaIndex {
+  uint16_t id;
+  uint16_t rid;
+  uint32_t min;
+} __attribute__((packed));
+
 struct Table {
   uint64_t volume;
   uint64_t capacity;

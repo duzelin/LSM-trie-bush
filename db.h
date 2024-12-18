@@ -11,6 +11,10 @@
 
 #include "table.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
   struct DB *
 db_touch(const char * const meta_dir, const char * const cm_conf_fn);
 
@@ -41,4 +45,8 @@ bool
 db_doing_compaction(struct DB * const db);
 
 void
-db_set_detach_dump_function(struct DB * const db, void (*func)(uint8_t * const));
+db_set_detach_dump_function(struct DB * const db, void * under_layer_db, void (*func)(void *, uint8_t * const, uint32_t, uint32_t, uint32_t));
+
+#ifdef __cplusplus
+} // end extern "C"
+#endif

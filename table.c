@@ -30,7 +30,6 @@
 
 #include "table.h"
 
-#define BARREL_CAP ((BARREL_ALIGN - sizeof(struct MetaIndex)))
 #define TABLE_VOLUME_PERCENT ((0.75))  // reduce this for large values
 #define METAINDEX_PERCENT ((0.99))
 #define METAINDEX_MAX_NR ((UINT64_C(2048)))
@@ -64,12 +63,6 @@ struct Barrel {  // a barrel of items
   uint16_t nr_out;
   uint32_t min;
 };
-
-struct MetaIndex {
-  uint16_t id;
-  uint16_t rid;
-  uint32_t min;
-} __attribute__((packed));
 
   static uint64_t
 __hash_bf(const uint8_t * const hash)

@@ -8,6 +8,10 @@
 
 #include <stdint.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 uint8_t *
 encode_uint64(uint8_t * const dst, const uint64_t v);
 
@@ -44,3 +48,7 @@ decode_uint32(const uint8_t * const src, uint32_t * const value)
   *value = (typeof(*value))v;
   return p;
 }
+
+#ifdef __cplusplus
+} // end extern "C"
+#endif

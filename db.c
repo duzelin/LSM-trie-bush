@@ -112,8 +112,10 @@ struct DB {
   // stat
   struct Stat stat;
 
+  // detach dumper
+  void * under_layer;
   //detach dump function
-  void (*detach_dump)(uint8_t * const);
+  void (*detach_dump)(void *, uint8_t * const, uint32_t, uint32_t, uint32_t);
 };
 
 struct Compaction {
@@ -942,7 +944,7 @@ const uint64_t ticket = rwlock_writer_lock(&(det->db->rwlock));
 
   static void
 detach_dump_all(struct Detach * const det) {
-  det->db->detach_dump(det->arena);
+  det->db->detach_dump(det->db->under_layer, det->arena, BARREL_ALIGN, BARREL_CAP, TABLE_ALIGN * det->nr_feed);
 }
 
   static void
@@ -970,7 +972,8 @@ detach_main(struct DB * const db, struct VirtualContainer * const vc) {
 }
 
   void
-db_set_detach_dump_function(struct DB * const db, void (*func)(uint8_t * const)) {
+db_set_detach_dump_function(struct DB * const db, void * under_layer_db, void (*func)(void *, uint8_t * const, uint32_t, uint32_t, uint32_t)) {
+  db->under_layer = under_layer_db;
   db->detach_dump = func;
 }
 
